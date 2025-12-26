@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patheffects import withStroke
+from matplotlib import patches
+from matplotlib.path import Path
 import numpy as np
 import requests
 import zipfile
@@ -12,20 +14,16 @@ import warnings
 from colour import Color
 import os
 import tempfile
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Point, Polygon, LineString
 import io
-from matplotlib.patches import PathPatch, Polygon as MPLPolygon
-from matplotlib.path import Path
-from matplotlib.collections import PatchCollection
-import matplotlib.patches as patches
-import pydeck as pdk
-from scipy import ndimage
+from scipy.interpolate import interp1d
+import networkx as nx
 
 warnings.filterwarnings('ignore')
 
 # Page configuration
 st.set_page_config(
-    page_title="Interactive World Frequency Map",
+    page_title="World Frequency Map with Chord Lines",
     page_icon="🌍",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -64,6 +62,14 @@ FILL_STYLES = {
     'Metallic Shine': {'type': 'metallic', 'gradient': True, 'edge_effect': 'sharp', 'texture': 'metal', 'reflection': 0.6},
     'Watercolor Wash': {'type': 'watercolor', 'gradient': True, 'edge_effect': 'blurry', 'texture': 'paper', 'blend': 0.7},
     'Heatmap Glow': {'type': 'heatmap', 'gradient': True, 'edge_effect': 'radiation', 'texture': 'gradient'},
+}
+
+# Line styles for chord connections
+LINE_STYLES = {
+    'Solid': '-',
+    'Dashed': '--',
+    'Dotted': ':',
+    'Dash-dot': '-.',
 }
 
 # Load world map data function
@@ -121,19 +127,33 @@ def load_world_map_data():
 
 def parse_input_data(input_text):
     """Parse input data from text area"""
-    data = {}
+    country_data = {}
+    connection_data = []
+    
     lines = input_text.strip().split('\n')
     for line in lines:
         if line.strip():
             parts = line.strip().split()
             if len(parts) >= 2:
-                country_code = parts[0].upper()
+                country_part = parts[0]
                 try:
                     frequency = float(parts[1])
-                    data[country_code] = frequency
+                    
+                    # Check if it's a connection (contains ;)
+                    if ';' in country_part:
+                        countries = [c.strip().upper() for c in country_part.split(';')]
+                        connection_data.append({
+                            'countries': countries,
+                            'frequency': frequency
+                        })
+                    else:
+                        # Single country frequency
+                        country_code = country_part.upper()
+                        country_data[country_code] = frequency
+                        
                 except:
                     pass
-    return data
+    return country_data, connection_data
 
 def create_custom_colormap(color1, color2, color3=None, n_points=256):
     """Create custom colormap from colors"""
@@ -519,115 +539,274 @@ def get_country_centroid(geometry):
             bounds = geometry.bounds
             return Point((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2)
 
-def create_pydeck_3d_map(mapped_data, world, color_scheme):
-    """Create an interactive 3D map with PyDeck"""
-    try:
-        # Prepare data for PyDeck
-        features = []
-        
-        for iso_code, freq in mapped_data.items():
-            country = world[world['ISO_A3'] == iso_code]
-            if not country.empty:
-                # Get centroid
-                centroid = get_country_centroid(country.geometry.iloc[0])
-                
-                # Normalize frequency for height
-                all_frequencies = list(mapped_data.values())
-                max_freq = max(all_frequencies) if all_frequencies else 1
-                min_freq = min(all_frequencies) if all_frequencies else 0
-                
-                if max_freq > min_freq:
-                    height = ((freq - min_freq) / (max_freq - min_freq)) * 500000
-                else:
-                    height = 100000
-                
-                # Convert color
-                color_obj = Color(color_scheme)
-                rgb = color_obj.rgb
-                color = [int(rgb[0]*255), int(rgb[1]*255), int(rgb[2]*255), 180]
-                
-                features.append({
-                    'type': 'Feature',
-                    'geometry': {
-                        'type': 'Point',
-                        'coordinates': [centroid.x, centroid.y]
-                    },
-                    'properties': {
-                        'country': iso_code,
-                        'frequency': freq,
-                        'height': height,
-                        'color': color
-                    }
-                })
-        
-        if not features:
-            return None
-        
-        # Create DataFrame for PyDeck
-        df = pd.DataFrame([{
-            'lon': f['geometry']['coordinates'][0],
-            'lat': f['geometry']['coordinates'][1],
-            'height': f['properties']['height'],
-            'country': f['properties']['country'],
-            'frequency': f['properties']['frequency'],
-            'color': f['properties']['color']
-        } for f in features])
-        
-        # Create 3D column layer
-        column_layer = pdk.Layer(
-            'ColumnLayer',
-            data=df,
-            get_position=['lon', 'lat'],
-            get_elevation='height',
-            elevation_scale=1,
-            radius=200000,
-            get_fill_color='color',
-            pickable=True,
-            auto_highlight=True,
-            extruded=True,
-            coverage=0.8
-        )
-        
-        # Create tooltip
-        tooltip = {
-            "html": """
-            <b>{country}</b><br/>
-            Frequency: <b>{frequency}</b><br/>
-            Height: <b>{height:,.0f}</b> meters
-            """,
-            "style": {
-                "backgroundColor": "steelblue",
-                "color": "white",
-                "padding": "10px",
-                "borderRadius": "5px"
-            }
-        }
-        
-        # Set initial view state
-        view_state = pdk.ViewState(
-            latitude=20,
-            longitude=0,
-            zoom=1,
-            pitch=45,
-            bearing=0
-        )
-        
-        # Create deck
-        deck = pdk.Deck(
-            layers=[column_layer],
-            initial_view_state=view_state,
-            tooltip=tooltip,
-            map_style='light',
-            height=600
-        )
-        
-        return deck
-        
-    except Exception as e:
-        st.error(f"Error creating 3D map: {e}")
-        return None
+def get_country_iso3(country_code, world):
+    """Get ISO_A3 code from country code with mapping"""
+    # First try mapping
+    if country_code in country_code_mapping:
+        return country_code_mapping[country_code]
+    
+    # Try to find in world data
+    for iso_col in ['ISO_A3', 'ISO_A3_EH', 'ADM0_A3', 'ISO_A2']:
+        if iso_col in world.columns:
+            matches = world[world[iso_col] == country_code]
+            if not matches.empty:
+                return matches.iloc[0]['ISO_A3'] if 'ISO_A3' in matches.columns else country_code
+    
+    return country_code
 
-def display_statistics(country_data, mapped_data, unmapped_codes):
+def map_country_codes(country_data, connection_data, world):
+    """Map country codes to ISO_A3 and create connection mappings"""
+    mapped_data = {}
+    unmapped_codes = []
+    
+    # Map single country frequencies
+    for code, freq in country_data.items():
+        iso_code = get_country_iso3(code, world)
+        if iso_code != code:  # Found mapping
+            mapped_data[iso_code] = freq
+        else:
+            unmapped_codes.append(code)
+    
+    # Map connections
+    mapped_connections = []
+    for conn in connection_data:
+        countries = conn['countries']
+        freq = conn['frequency']
+        
+        mapped_countries = []
+        all_mapped = True
+        
+        for country in countries:
+            iso_code = get_country_iso3(country, world)
+            if iso_code != country:
+                mapped_countries.append(iso_code)
+            else:
+                all_mapped = False
+                unmapped_codes.append(country)
+        
+        if all_mapped and len(mapped_countries) >= 2:
+            # Create pairwise connections for multiple countries
+            if len(mapped_countries) == 2:
+                mapped_connections.append({
+                    'countries': mapped_countries,
+                    'frequency': freq
+                })
+            else:
+                # For 3+ countries, create connections between each pair
+                for i in range(len(mapped_countries)):
+                    for j in range(i+1, len(mapped_countries)):
+                        mapped_connections.append({
+                            'countries': [mapped_countries[i], mapped_countries[j]],
+                            'frequency': freq
+                        })
+    
+    return mapped_data, mapped_connections, unmapped_codes
+
+def calculate_bezier_curve(p1, p2, height_factor=0.3):
+    """
+    Calculate cubic Bezier curve points between two points
+    p1, p2: Points as (x, y) tuples
+    height_factor: Controls the curve height (0 = straight line)
+    """
+    # Calculate control points for a natural curve
+    dx = p2[0] - p1[0]
+    dy = p2[1] - p1[1]
+    
+    # Distance between points
+    dist = np.sqrt(dx**2 + dy**2)
+    
+    # Normalized direction
+    if dist > 0:
+        nx, ny = dx/dist, dy/dist
+    else:
+        nx, ny = 0, 0
+    
+    # Midpoint
+    mid_x = (p1[0] + p2[0]) / 2
+    mid_y = (p1[1] + p2[1]) / 2
+    
+    # Perpendicular direction for curve
+    perp_x = -ny
+    perp_y = nx
+    
+    # Control point at midpoint with perpendicular offset
+    # Height increases with distance
+    curve_height = dist * height_factor
+    control_x = mid_x + perp_x * curve_height
+    control_y = mid_y + perp_y * curve_height
+    
+    # Two control points for smoother curve
+    control1_x = p1[0] + (control_x - p1[0]) * 0.5
+    control1_y = p1[1] + (control_y - p1[1]) * 0.5
+    
+    control2_x = p2[0] + (control_x - p2[0]) * 0.5
+    control2_y = p2[1] + (control_y - p2[1]) * 0.5
+    
+    # Generate curve points
+    t = np.linspace(0, 1, 100)
+    curve_x = (1-t)**3 * p1[0] + 3*(1-t)**2*t * control1_x + 3*(1-t)*t**2 * control2_x + t**3 * p2[0]
+    curve_y = (1-t)**3 * p1[1] + 3*(1-t)**2*t * control1_y + 3*(1-t)*t**2 * control2_y + t**3 * p2[1]
+    
+    return curve_x, curve_y, (control_x, control_y)
+
+def draw_connection_line(ax, p1, p2, frequency, max_frequency, min_frequency, 
+                         color1, color2, line_style, show_arrows=True):
+    """Draw a curved connection line between two points"""
+    
+    # Normalize line width
+    min_line_width = st.session_state.min_line_width
+    max_line_width = st.session_state.max_line_width
+    
+    if max_frequency > min_frequency:
+        normalized_freq = (frequency - min_frequency) / (max_frequency - min_frequency)
+        line_width = min_line_width + normalized_freq * (max_line_width - min_line_width)
+    else:
+        line_width = (min_line_width + max_line_width) / 2
+    
+    # Calculate curve
+    curve_x, curve_y, control_point = calculate_bezier_curve(
+        p1, p2, height_factor=st.session_state.curve_height
+    )
+    
+    # Choose color based on settings
+    if st.session_state.line_color_type == 'Single Color':
+        line_color = st.session_state.line_color
+    elif st.session_state.line_color_type == 'Gradient (Source to Destination)':
+        # Create gradient from color1 to color2 along the curve
+        line_color = color1  # For simplicity, use source color
+    else:  # 'By Frequency'
+        # Use colormap based on frequency
+        norm_freq = (frequency - min_frequency) / max(1, (max_frequency - min_frequency))
+        cmap = plt.cm.get_cmap(st.session_state.line_colormap)
+        line_color = cmap(norm_freq)
+    
+    # Set alpha based on frequency
+    min_alpha = 0.3
+    max_alpha = 0.9
+    if max_frequency > min_frequency:
+        alpha = min_alpha + (frequency - min_frequency) / (max_frequency - min_frequency) * (max_alpha - min_alpha)
+    else:
+        alpha = (min_alpha + max_alpha) / 2
+    
+    # Draw the curve
+    ax.plot(curve_x, curve_y, 
+            linewidth=line_width,
+            color=line_color,
+            alpha=alpha,
+            linestyle=line_style,
+            solid_capstyle='round')
+    
+    # Add arrow if enabled
+    if show_arrows and st.session_state.show_arrows:
+        # Place arrow at 70% along the curve
+        idx = int(len(curve_x) * 0.7)
+        if idx < len(curve_x) - 1:
+            dx = curve_x[idx+1] - curve_x[idx]
+            dy = curve_y[idx+1] - curve_y[idx]
+            
+            arrow_length = line_width * 2
+            ax.arrow(curve_x[idx], curve_y[idx], 
+                    dx * 0.1, dy * 0.1,
+                    head_width=arrow_length,
+                    head_length=arrow_length,
+                    fc=line_color, ec=line_color,
+                    alpha=alpha*0.8)
+    
+    return line_width
+
+def draw_chord_lines(ax, world, connections, mapped_data, country_colors):
+    """Draw chord lines between countries"""
+    if not connections:
+        return
+    
+    # Get all frequencies for normalization
+    connection_frequencies = [conn['frequency'] for conn in connections]
+    if not connection_frequencies:
+        return
+    
+    min_freq = min(connection_frequencies)
+    max_freq = max(connection_frequencies)
+    
+    # Get country centroids
+    country_centroids = {}
+    for iso_code in set([c for conn in connections for c in conn['countries']]):
+        country = world[world['ISO_A3'] == iso_code]
+        if not country.empty:
+            centroid = get_country_centroid(country.geometry.iloc[0])
+            country_centroids[iso_code] = (centroid.x, centroid.y)
+    
+    # Sort connections by frequency (draw smaller ones first)
+    sorted_connections = sorted(connections, key=lambda x: x['frequency'])
+    
+    # Draw each connection
+    for conn in sorted_connections:
+        countries = conn['countries']
+        freq = conn['frequency']
+        
+        if len(countries) >= 2:
+            # Get coordinates for all countries
+            coords = []
+            valid = True
+            for country in countries[:2]:  # Only use first 2 for line
+                if country in country_centroids:
+                    coords.append(country_centroids[country])
+                else:
+                    valid = False
+                    break
+            
+            if valid and len(coords) == 2:
+                # Get colors for these countries
+                color1 = country_colors.get(countries[0], '#888888')
+                color2 = country_colors.get(countries[1], '#888888')
+                
+                # Draw the line
+                line_width = draw_connection_line(
+                    ax, coords[0], coords[1], freq,
+                    max_freq, min_freq,
+                    color1, color2,
+                    LINE_STYLES[st.session_state.line_style],
+                    show_arrows=True
+                )
+                
+                # Add label if enabled
+                if st.session_state.show_line_labels and freq >= st.session_state.min_label_freq:
+                    # Place label near the curve peak
+                    curve_x, curve_y, _ = calculate_bezier_curve(
+                        coords[0], coords[1], 
+                        height_factor=st.session_state.curve_height
+                    )
+                    
+                    # Find highest point of the curve
+                    if len(curve_y) > 0:
+                        max_idx = np.argmax(curve_y)
+                        label_x, label_y = curve_x[max_idx], curve_y[max_idx]
+                        
+                        label_text = f"{freq:.0f}"
+                        if st.session_state.line_label_type == 'Full':
+                            label_text = f"{countries[0]}-{countries[1]}: {freq:.0f}"
+                        
+                        ax.annotate(
+                            label_text,
+                            xy=(label_x, label_y),
+                            xytext=(0, 0),
+                            textcoords="offset points",
+                            ha='center',
+                            va='center',
+                            fontsize=st.session_state.line_font_size,
+                            color='black',
+                            weight='bold',
+                            fontfamily='sans-serif',
+                            path_effects=[withStroke(linewidth=2, foreground='white')],
+                            bbox=dict(
+                                boxstyle="round,pad=0.3", 
+                                facecolor='white', 
+                                alpha=0.8, 
+                                edgecolor='gray',
+                                linewidth=0.5
+                            )
+                        )
+
+def display_statistics(country_data, connection_data, mapped_data, mapped_connections, unmapped_codes):
     """Display statistics panel"""
     st.subheader("📊 Data Statistics")
     
@@ -641,18 +820,47 @@ def display_statistics(country_data, mapped_data, unmapped_codes):
         st.metric("Countries Matched", f"{matched}/{len(country_data)}")
     
     with col_stat3:
-        if mapped_data:
-            values = list(mapped_data.values())
-            st.metric("Frequency Range", f"{min(values):.1f} - {max(values):.1f}")
+        if connection_data:
+            st.metric("Total Connections", len(connection_data))
         else:
-            st.metric("Frequency Range", "N/A")
+            st.metric("Total Connections", "0")
     
     with col_stat4:
         if mapped_data:
-            avg = sum(mapped_data.values()) / len(mapped_data)
-            st.metric("Average Frequency", f"{avg:.2f}")
+            values = list(mapped_data.values())
+            if values:
+                avg = sum(values) / len(values)
+                st.metric("Avg Country Freq", f"{avg:.2f}")
+            else:
+                st.metric("Avg Country Freq", "N/A")
         else:
-            st.metric("Average Frequency", "N/A")
+            st.metric("Avg Country Freq", "N/A")
+    
+    # Connection statistics
+    if mapped_connections:
+        st.subheader("🔗 Connection Statistics")
+        conn_col1, conn_col2, conn_col3 = st.columns(3)
+        
+        with conn_col1:
+            conn_freqs = [c['frequency'] for c in mapped_connections]
+            st.metric("Total Connection Freq", f"{sum(conn_freqs):.0f}")
+        
+        with conn_col2:
+            st.metric("Avg Connection Freq", f"{np.mean(conn_freqs):.2f}")
+        
+        with conn_col3:
+            st.metric("Max Connection Freq", f"{max(conn_freqs):.0f}")
+        
+        # Top connections table
+        st.subheader("🏆 Top Connections")
+        top_conns = sorted(mapped_connections, key=lambda x: x['frequency'], reverse=True)[:10]
+        conn_df = pd.DataFrame([{
+            'From': c['countries'][0],
+            'To': c['countries'][1] if len(c['countries']) > 1 else 'Multiple',
+            'Frequency': c['frequency']
+        } for c in top_conns])
+        
+        st.dataframe(conn_df, use_container_width=True)
     
     # Top countries table
     st.subheader("🏆 Top Countries")
@@ -673,16 +881,16 @@ def display_statistics(country_data, mapped_data, unmapped_codes):
     
     # Show unmatched codes
     if unmapped_codes:
-        st.warning(f"⚠️ {len(unmapped_codes)} country codes could not be matched: {', '.join(sorted(unmapped_codes)[:10])}")
+        st.warning(f"⚠️ {len(unmapped_codes)} country codes could not be matched: {', '.join(sorted(set(unmapped_codes))[:10])}")
         if len(unmapped_codes) > 10:
             st.info(f"... and {len(unmapped_codes) - 10} more unmatched codes")
-            
+
 def generate_map():
     """Generate the world frequency map"""
     # Parse input data
-    country_data = parse_input_data(st.session_state.data_input)
+    country_data, connection_data = parse_input_data(st.session_state.data_input)
     
-    if not country_data:
+    if not country_data and not connection_data:
         st.error("No valid data to display. Please enter country codes and frequencies.")
         return None
     
@@ -694,149 +902,136 @@ def generate_map():
             return None
     
     # Map country codes to ISO_A3
-    mapped_data = {}
-    unmapped_codes = []
-    for code, freq in country_data.items():
-        matched = False
-        if code in country_code_mapping:
-            mapped_data[country_code_mapping[code]] = freq
-            matched = True
-        else:
-            # Try to find in world data
-            for iso_col in ['ISO_A3', 'ISO_A3_EH', 'ADM0_A3', 'ISO_A2']:
-                if iso_col in world.columns:
-                    matches = world[world[iso_col] == code]
-                    if not matches.empty:
-                        iso_code = matches.iloc[0]['ISO_A3'] if 'ISO_A3' in matches.columns else code
-                        mapped_data[iso_code] = freq
-                        matched = True
-                        break
-        
-        if not matched:
-            unmapped_codes.append(code)
+    mapped_data, mapped_connections, unmapped_codes = map_country_codes(
+        country_data, connection_data, world
+    )
     
-    # Check map type
-    if st.session_state.map_type == '3D Globe (PyDeck)':
-        # Generate 3D map
-        deck_map = create_pydeck_3d_map(mapped_data, world, st.session_state.color2)
-        return deck_map, country_data, mapped_data, unmapped_codes, None, None
+    # Create figure with high DPI
+    fig, ax = plt.subplots(1, 1, figsize=(20, 10), dpi=150)
+    
+    # Set background
+    ax.set_facecolor(st.session_state.background_color)
+    
+    # Plot all countries as background
+    world.plot(ax=ax, color='lightgrey', edgecolor=st.session_state.border_color, 
+              linewidth=0.3, alpha=0.7)
+    
+    # Get valid data
+    valid_data = world.merge(
+        pd.DataFrame(list(mapped_data.items()), columns=['ISO_A3', 'frequency']),
+        left_on='ISO_A3', right_on='ISO_A3', how='inner'
+    ) if mapped_data else pd.DataFrame()
+    
+    if not valid_data.empty:
+        # Get color values
+        color1 = st.session_state.color1
+        color2 = st.session_state.color2
+        color3 = st.session_state.color3 if st.session_state.color_points == '3 Colors (Diverging)' else None
+        
+        # Create enhanced colormap based on fill style
+        cmap = create_enhanced_colormap(color1, color2, color3, st.session_state.fill_style)
+        
+        # Normalize data
+        min_val = valid_data['frequency'].min()
+        max_val = valid_data['frequency'].max()
+        norm = mcolors.Normalize(vmin=min_val, vmax=max_val)
+        
+        # Store country colors for chord lines
+        country_colors = {}
+        
+        # Plot countries with data using selected fill style
+        for idx, row in valid_data.iterrows():
+            color = cmap(norm(row['frequency']))
+            country_colors[row['ISO_A3']] = color
+            apply_fill_style_to_country(ax, row.geometry, color, st.session_state.fill_style)
+        
+        # Draw chord lines if enabled
+        if st.session_state.show_chords and mapped_connections:
+            draw_chord_lines(ax, world, mapped_connections, mapped_data, country_colors)
+        
+        # Add labels for top countries if enabled
+        if st.session_state.show_labels and not valid_data.empty:
+            # Sort by frequency and take top N
+            top_countries = valid_data.nlargest(st.session_state.top_n_labels, 'frequency')
+            
+            for idx, row in top_countries.iterrows():
+                try:
+                    # Get centroid for label placement
+                    centroid = get_country_centroid(row.geometry)
+                    
+                    # Skip if centroid is invalid
+                    if centroid.is_empty:
+                        continue
+                        
+                    # Create label text
+                    if st.session_state.label_type == 'Code Only':
+                        label = row['ISO_A3'] if pd.notna(row['ISO_A3']) else ''
+                    elif st.session_state.label_type == 'Value Only':
+                        label = f"{row['frequency']:.0f}"
+                    else:  # Code + Value
+                        code = row['ISO_A3'] if pd.notna(row['ISO_A3']) else ''
+                        label = f"{code}\n{row['frequency']:.0f}"
+                    
+                    if label:
+                        # Add text with outline for better visibility
+                        ax.annotate(
+                            label,
+                            xy=(centroid.x, centroid.y),
+                            xytext=(0, 0),
+                            textcoords="offset points",
+                            ha='center',
+                            va='center',
+                            fontsize=st.session_state.font_size,
+                            color='black',
+                            weight='bold',
+                            fontfamily='sans-serif',
+                            path_effects=[withStroke(linewidth=3, foreground='white')],
+                            bbox=dict(
+                                boxstyle="round,pad=0.5", 
+                                facecolor='white', 
+                                alpha=0.85, 
+                                edgecolor='gray',
+                                linewidth=0.5
+                            )
+                        )
+                except Exception as e:
+                    continue
+        
+        # Add colorbar with style matching the map
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=ax, orientation='horizontal', 
+                          pad=0.08, aspect=60, shrink=0.8)
+        cbar.set_label(st.session_state.scale_title, fontsize=14, weight='bold')
+        cbar.ax.tick_params(labelsize=11)
     
     else:
-        # Generate 2D map
-        # Merge with world data
-        if mapped_data:
-            data_df = pd.DataFrame(list(mapped_data.items()), columns=['ISO_A3', 'frequency'])
-            merged = world.merge(data_df, left_on='ISO_A3', right_on='ISO_A3', how='left')
-        else:
-            merged = world.copy()
-            merged['frequency'] = None
-        
-        # Create figure with high DPI
-        fig, ax = plt.subplots(1, 1, figsize=(20, 10), dpi=150)
-        
-        # Set background
-        ax.set_facecolor(st.session_state.background_color)
-        
-        # Plot all countries as background
-        world.plot(ax=ax, color='lightgrey', edgecolor=st.session_state.border_color, 
-                  linewidth=0.3, alpha=0.7)
-        
-        # Get valid data
-        valid_data = merged[merged['frequency'].notna()].copy()
-        
-        if not valid_data.empty:
-            # Get color values
-            color1 = st.session_state.color1
-            color2 = st.session_state.color2
-            color3 = st.session_state.color3 if st.session_state.color_points == '3 Colors (Diverging)' else None
-            
-            # Create enhanced colormap based on fill style
-            cmap = create_enhanced_colormap(color1, color2, color3, st.session_state.fill_style)
-            
-            # Normalize data
-            min_val = valid_data['frequency'].min()
-            max_val = valid_data['frequency'].max()
-            norm = mcolors.Normalize(vmin=min_val, vmax=max_val)
-            
-            # Plot countries with data using selected fill style
-            for idx, row in valid_data.iterrows():
-                color = cmap(norm(row['frequency']))
-                apply_fill_style_to_country(ax, row.geometry, color, st.session_state.fill_style)
-            
-            # Add labels for top countries if enabled
-            if st.session_state.show_labels and not valid_data.empty:
-                # Sort by frequency and take top N
-                top_countries = valid_data.nlargest(st.session_state.top_n_labels, 'frequency')
-                
-                for idx, row in top_countries.iterrows():
-                    try:
-                        # Get centroid for label placement
-                        centroid = get_country_centroid(row.geometry)
-                        
-                        # Skip if centroid is invalid
-                        if centroid.is_empty:
-                            continue
-                            
-                        # Create label text
-                        if st.session_state.label_type == 'Code Only':
-                            label = row['ISO_A3'] if pd.notna(row['ISO_A3']) else ''
-                        elif st.session_state.label_type == 'Value Only':
-                            label = f"{row['frequency']:.0f}"
-                        else:  # Code + Value
-                            code = row['ISO_A3'] if pd.notna(row['ISO_A3']) else ''
-                            label = f"{code}\n{row['frequency']:.0f}"
-                        
-                        if label:
-                            # Add text with outline for better visibility
-                            ax.annotate(
-                                label,
-                                xy=(centroid.x, centroid.y),
-                                xytext=(0, 0),
-                                textcoords="offset points",
-                                ha='center',
-                                va='center',
-                                fontsize=st.session_state.font_size,
-                                color='black',
-                                weight='bold',
-                                fontfamily='sans-serif',
-                                path_effects=[withStroke(linewidth=3, foreground='white')],
-                                bbox=dict(
-                                    boxstyle="round,pad=0.5", 
-                                    facecolor='white', 
-                                    alpha=0.85, 
-                                    edgecolor='gray',
-                                    linewidth=0.5
-                                )
-                            )
-                    except Exception as e:
-                        continue
-            
-            # Add colorbar with style matching the map
-            sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-            sm.set_array([])
-            cbar = fig.colorbar(sm, ax=ax, orientation='horizontal', 
-                              pad=0.08, aspect=60, shrink=0.8)
-            cbar.set_label(st.session_state.scale_title, fontsize=14, weight='bold')
-            cbar.ax.tick_params(labelsize=11)
-        
-        # Set title with enhanced styling
-        ax.set_title(st.session_state.map_title, fontsize=22, pad=30, 
-                    weight='bold', fontfamily='sans-serif',
-                    color='#2C3E50')
-        
-        # Add subtle grid for orientation
-        ax.grid(True, alpha=0.1, linestyle='--', linewidth=0.5)
-        
-        # Remove axes but keep grid
-        ax.set_axis_off()
-        
-        # Add subtle shadow to the whole map
-        fig.patch.set_alpha(0.9)
-        
-        # Adjust layout
-        plt.tight_layout()
-        
-        return fig, country_data, mapped_data, unmapped_codes, min_val if not valid_data.empty else 0, max_val if not valid_data.empty else 0
+        # If no country data but have connections, still draw connections
+        if st.session_state.show_chords and mapped_connections:
+            country_colors = {code: '#888888' for conn in mapped_connections for code in conn['countries']}
+            draw_chord_lines(ax, world, mapped_connections, {}, country_colors)
+    
+    # Set title with enhanced styling
+    title_text = st.session_state.map_title
+    if st.session_state.show_chords and mapped_connections:
+        title_text += " with Connections"
+    ax.set_title(title_text, fontsize=22, pad=30, 
+                weight='bold', fontfamily='sans-serif',
+                color='#2C3E50')
+    
+    # Add subtle grid for orientation
+    ax.grid(True, alpha=0.1, linestyle='--', linewidth=0.5)
+    
+    # Remove axes but keep grid
+    ax.set_axis_off()
+    
+    # Add subtle shadow to the whole map
+    fig.patch.set_alpha(0.9)
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    return fig, country_data, connection_data, mapped_data, mapped_connections, unmapped_codes
 
 def reset_settings():
     """Reset all settings to defaults"""
@@ -860,7 +1055,18 @@ BR\t25
 IR\t23
 AU\t20
 ES\t18
-MY\t14"""
+MY\t14
+CN;US\t10
+IN;KR\t10
+BY;RU\t8
+AU;CN\t7
+RU;SA;TR\t6
+IN;SA\t6
+PK;SA\t5
+IN;US\t5
+KZ;RU\t4
+CN;JP\t4
+EG;RU\t4"""
     st.session_state.map_title = "World Frequency Map"
     st.session_state.scale_title = "Frequency"
     st.session_state.palette_selection = "Red Gradient"
@@ -872,7 +1078,21 @@ MY\t14"""
     st.session_state.font_size = 8
     st.session_state.background_color = "#F5F5F5"
     st.session_state.border_color = "#FFFFFF"
-    st.session_state.map_type = "2D Enhanced"
+    st.session_state.show_chords = True
+    
+    # Chord line settings
+    st.session_state.min_line_width = 0.5
+    st.session_state.max_line_width = 5.0
+    st.session_state.curve_height = 0.3
+    st.session_state.line_style = 'Solid'
+    st.session_state.line_color_type = 'Single Color'
+    st.session_state.line_color = '#FF5252'
+    st.session_state.line_colormap = 'viridis'
+    st.session_state.show_arrows = True
+    st.session_state.show_line_labels = False
+    st.session_state.line_label_type = 'Value Only'
+    st.session_state.min_label_freq = 5
+    st.session_state.line_font_size = 8
     
     # Update color pickers based on palette
     selected_colors = PREDEFINED_PALETTES[st.session_state.palette_selection]
@@ -886,10 +1106,10 @@ if 'data_input' not in st.session_state:
     reset_settings()
 
 # Main app layout
-st.title("🌍 Interactive World Frequency Map Generator")
+st.title("🌍 World Frequency Map with Chord Connections")
 st.markdown("""
-Create stunning world frequency maps with advanced visual effects. 
-Choose between **2D enhanced maps** with beautiful fill styles or **interactive 3D globes**.
+Create stunning world frequency maps with chord lines showing connections between countries. 
+Supports both single country frequencies (CN 216) and connections (CN;US 10).
 """)
 
 # Create columns for layout
@@ -899,42 +1119,35 @@ with col1:
     st.subheader("📝 Data Input")
     
     data_input = st.text_area(
-        "Enter country codes and frequencies:",
+        "Enter country data and connections:",
         value=st.session_state.data_input,
-        height=250,
+        height=300,
         key="data_input_widget",
-        help="Format: Country_Code<TAB>Frequency (Example: US\t100)"
+        help="""Format examples:
+        Single country: CN 216
+        Connection: CN;US 10
+        Multiple countries: RU;SA;TR 6 (will create pairwise connections)"""
     )
     st.session_state.data_input = data_input
     
-    # Map type selection
-    st.subheader("🗺️ Map Type")
-    map_type = st.radio(
-        "Select visualization type:",
-        options=['2D Enhanced', '3D Globe (PyDeck)'],
-        index=0 if st.session_state.map_type == '2D Enhanced' else 1,
-        key="map_type_widget",
-        horizontal=True
-    )
-    st.session_state.map_type = map_type
+    st.info("💡 **Data Format**: Use TAB between country codes and frequency. For connections, separate countries with semicolon.")
     
-    if map_type == '2D Enhanced':
-        # Map settings for 2D
-        st.subheader("🎨 2D Map Settings")
-        
-        map_title = st.text_input(
-            "Map Title:",
-            value=st.session_state.map_title,
-            key="map_title_widget"
-        )
-        st.session_state.map_title = map_title
-        
-        scale_title = st.text_input(
-            "Scale Title:",
-            value=st.session_state.scale_title,
-            key="scale_title_widget"
-        )
-        st.session_state.scale_title = scale_title
+    # Map settings
+    st.subheader("🗺️ Map Settings")
+    
+    map_title = st.text_input(
+        "Map Title:",
+        value=st.session_state.map_title,
+        key="map_title_widget"
+    )
+    st.session_state.map_title = map_title
+    
+    scale_title = st.text_input(
+        "Scale Title:",
+        value=st.session_state.scale_title,
+        key="scale_title_widget"
+    )
+    st.session_state.scale_title = scale_title
 
 with col2:
     st.subheader("🎨 Color Settings")
@@ -1001,97 +1214,198 @@ with col2:
             )
             st.session_state.color2 = color2
     
-    if st.session_state.map_type == '2D Enhanced':
-        # Fill style for 2D maps
-        st.subheader("🖌️ Fill Style")
-        fill_style = st.selectbox(
-            "Choose fill style:",
-            options=list(FILL_STYLES.keys()),
-            index=list(FILL_STYLES.keys()).index(st.session_state.fill_style),
-            key="fill_style_widget"
-        )
-        st.session_state.fill_style = fill_style
+    # Fill style for maps
+    st.subheader("🖌️ Fill Style")
+    fill_style = st.selectbox(
+        "Choose fill style:",
+        options=list(FILL_STYLES.keys()),
+        index=list(FILL_STYLES.keys()).index(st.session_state.fill_style),
+        key="fill_style_widget"
+    )
+    st.session_state.fill_style = fill_style
+
+# Chord connections settings
+with st.expander("🔗 Chord Line Settings", expanded=False):
+    col_ch1, col_ch2 = st.columns(2)
+    
+    with col_ch1:
+        st.subheader("📏 Line Appearance")
         
-        # Preview of fill styles
-        with st.expander("🎨 Fill Style Previews"):
-            cols = st.columns(3)
-            style_descriptions = {
-                'Matte (Flat)': 'Clean flat colors',
-                'Glossy (3D Effect)': '3D glossy look with highlights',
-                'Neon Glow': 'Glowing neon effect with outer glow',
-                'Topographic': 'Heightmap/terrain effect',
-                'Metallic Shine': 'Metallic reflection effect',
-                'Watercolor Wash': 'Soft watercolor texture',
-                'Heatmap Glow': 'Heat radiation glow effect'
-            }
+        show_chords = st.checkbox(
+            "Show chord lines",
+            value=st.session_state.show_chords,
+            key="show_chords_widget"
+        )
+        st.session_state.show_chords = show_chords
+        
+        if show_chords:
+            min_line_width = st.slider(
+                "Min line width:",
+                min_value=0.1,
+                max_value=3.0,
+                value=st.session_state.min_line_width,
+                step=0.1,
+                key="min_line_width_widget"
+            )
+            st.session_state.min_line_width = min_line_width
             
-            for idx, (style_name, description) in enumerate(style_descriptions.items()):
-                with cols[idx % 3]:
-                    if st.button(f"✓ {style_name}", 
-                               help=description,
-                               use_container_width=True):
-                        st.session_state.fill_style = style_name
-                        st.rerun()
+            max_line_width = st.slider(
+                "Max line width:",
+                min_value=1.0,
+                max_value=10.0,
+                value=st.session_state.max_line_width,
+                step=0.1,
+                key="max_line_width_widget"
+            )
+            st.session_state.max_line_width = max_line_width
+            
+            curve_height = st.slider(
+                "Curve height:",
+                min_value=0.0,
+                max_value=1.0,
+                value=st.session_state.curve_height,
+                step=0.05,
+                key="curve_height_widget"
+            )
+            st.session_state.curve_height = curve_height
+            
+            line_style = st.selectbox(
+                "Line style:",
+                options=list(LINE_STYLES.keys()),
+                index=list(LINE_STYLES.keys()).index(st.session_state.line_style),
+                key="line_style_widget"
+            )
+            st.session_state.line_style = line_style
+    
+    with col_ch2:
+        if show_chords:
+            st.subheader("🎨 Line Colors")
+            
+            line_color_type = st.radio(
+                "Line coloring:",
+                options=['Single Color', 'By Frequency'],
+                index=0 if st.session_state.line_color_type == 'Single Color' else 1,
+                key="line_color_type_widget",
+                horizontal=True
+            )
+            st.session_state.line_color_type = line_color_type
+            
+            if line_color_type == 'Single Color':
+                line_color = st.color_picker(
+                    "Line color:",
+                    value=st.session_state.line_color,
+                    key="line_color_widget"
+                )
+                st.session_state.line_color = line_color
+            else:
+                line_colormap = st.selectbox(
+                    "Colormap:",
+                    options=['viridis', 'plasma', 'inferno', 'magma', 'coolwarm', 'RdYlBu'],
+                    index=['viridis', 'plasma', 'inferno', 'magma', 'coolwarm', 'RdYlBu'].index(
+                        st.session_state.line_colormap),
+                    key="line_colormap_widget"
+                )
+                st.session_state.line_colormap = line_colormap
+            
+            show_arrows = st.checkbox(
+                "Show direction arrows",
+                value=st.session_state.show_arrows,
+                key="show_arrows_widget"
+            )
+            st.session_state.show_arrows = show_arrows
+            
+            st.subheader("🏷️ Line Labels")
+            show_line_labels = st.checkbox(
+                "Show frequency labels on lines",
+                value=st.session_state.show_line_labels,
+                key="show_line_labels_widget"
+            )
+            st.session_state.show_line_labels = show_line_labels
+            
+            if show_line_labels:
+                line_label_type = st.selectbox(
+                    "Label type:",
+                    options=['Value Only', 'Full'],
+                    index=0 if st.session_state.line_label_type == 'Value Only' else 1,
+                    key="line_label_type_widget"
+                )
+                st.session_state.line_label_type = line_label_type
+                
+                min_label_freq = st.slider(
+                    "Min frequency for labels:",
+                    min_value=0,
+                    max_value=50,
+                    value=st.session_state.min_label_freq,
+                    key="min_label_freq_widget"
+                )
+                st.session_state.min_label_freq = min_label_freq
+                
+                line_font_size = st.slider(
+                    "Label font size:",
+                    min_value=6,
+                    max_value=16,
+                    value=st.session_state.line_font_size,
+                    key="line_font_size_widget"
+                )
+                st.session_state.line_font_size = line_font_size
 
 # Advanced settings expander
 with st.expander("⚙️ Advanced Settings", expanded=False):
     col3, col4 = st.columns(2)
     
     with col3:
-        if st.session_state.map_type == '2D Enhanced':
-            st.subheader("🌐 Background & Borders")
-            
-            background_color = st.color_picker(
-                "Background Color:",
-                value=st.session_state.background_color,
-                key="background_color_widget"
-            )
-            st.session_state.background_color = background_color
-            
-            border_color = st.color_picker(
-                "Border Color:",
-                value=st.session_state.border_color,
-                key="border_color_widget"
-            )
-            st.session_state.border_color = border_color
+        st.subheader("🌐 Background & Borders")
+        
+        background_color = st.color_picker(
+            "Background Color:",
+            value=st.session_state.background_color,
+            key="background_color_widget"
+        )
+        st.session_state.background_color = background_color
+        
+        border_color = st.color_picker(
+            "Border Color:",
+            value=st.session_state.border_color,
+            key="border_color_widget"
+        )
+        st.session_state.border_color = border_color
     
     with col4:
-        if st.session_state.map_type == '2D Enhanced':
-            st.subheader("🏷️ Label Settings")
-            
-            show_labels = st.checkbox(
-                "Show country labels on map",
-                value=st.session_state.show_labels,
-                key="show_labels_widget"
+        st.subheader("🏷️ Country Label Settings")
+        
+        show_labels = st.checkbox(
+            "Show country labels on map",
+            value=st.session_state.show_labels,
+            key="show_labels_widget"
+        )
+        st.session_state.show_labels = show_labels
+        
+        if show_labels:
+            label_type = st.selectbox(
+                "Label Type:",
+                options=['Code Only', 'Value Only', 'Code + Value'],
+                index=['Code Only', 'Value Only', 'Code + Value'].index(st.session_state.label_type),
+                key="label_type_widget"
             )
-            st.session_state.show_labels = show_labels
+            st.session_state.label_type = label_type
             
-            if show_labels:
-                label_type = st.selectbox(
-                    "Label Type:",
-                    options=['Code Only', 'Value Only', 'Code + Value'],
-                    index=['Code Only', 'Value Only', 'Code + Value'].index(st.session_state.label_type),
-                    key="label_type_widget"
-                )
-                st.session_state.label_type = label_type
-                
-                top_n_labels = st.slider(
-                    "Top N labels to show:",
-                    min_value=1,
-                    max_value=50,
-                    value=st.session_state.top_n_labels,
-                    key="top_n_labels_widget"
-                )
-                st.session_state.top_n_labels = top_n_labels
-                
-                font_size = st.slider(
-                    "Font size:",
-                    min_value=6,
-                    max_value=20,
-                    value=st.session_state.font_size,
-                    key="font_size_widget"
-                )
-                st.session_state.font_size = font_size
+            top_n_labels = st.slider(
+                "Top N labels to show:",
+                min_value=1,
+                max_value=50,
+                value=st.session_state.top_n_labels,
+                key="top_n_labels_widget"
+            )
+            st.session_state.top_n_labels = top_n_labels
+            
+            font_size = st.slider(
+                "Font size:",
+                min_value=6,
+                max_value=20,
+                value=st.session_state.font_size,
+                key="font_size_widget"
+            )
+            st.session_state.font_size = font_size
 
 # Buttons
 col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
@@ -1121,11 +1435,22 @@ BR\t25
 IR\t23
 AU\t20
 ES\t18
-MY\t14"""
+MY\t14
+CN;US\t10
+IN;KR\t10
+BY;RU\t8
+AU;CN\t7
+RU;SA;TR\t6
+IN;SA\t6
+PK;SA\t5
+IN;US\t5
+KZ;RU\t4
+CN;JP\t4
+EG;RU\t4"""
         st.download_button(
             label="📥 Click to download",
             data=sample_data,
-            file_name="sample_country_data.txt",
+            file_name="sample_country_connections.txt",
             mime="text/plain",
             use_container_width=True
         )
@@ -1137,64 +1462,53 @@ if reset_btn:
 
 # Generate map when button is clicked
 if generate_btn:
-    with st.spinner("🚀 Generating beautiful map..."):
+    with st.spinner("🚀 Generating map with chord connections..."):
         result = generate_map()
         
         if result:
-            if st.session_state.map_type == '3D Globe (PyDeck)':
-                deck_map, country_data, mapped_data, unmapped_codes, _, _ = result
-                
-                if deck_map:
-                    st.subheader("🗺️ 3D Interactive Globe")
-                    st.pydeck_chart(deck_map)
-                    
-                    # Display statistics
-                    display_statistics(country_data, mapped_data, unmapped_codes)
-                    
-            else:
-                fig, country_data, mapped_data, unmapped_codes, min_val, max_val = result
-                
-                # Display the map
-                st.subheader("🗺️ Enhanced 2D Map")
-                st.pyplot(fig)
-                
-                # Display statistics
-                display_statistics(country_data, mapped_data, unmapped_codes)
-                
-                # Map download options
-                st.subheader("💾 Export Options")
-                
-                # Convert figure to bytes for download
-                buf = io.BytesIO()
-                fig.savefig(buf, format='png', dpi=200, bbox_inches='tight', 
+            fig, country_data, connection_data, mapped_data, mapped_connections, unmapped_codes = result
+            
+            # Display the map
+            st.subheader("🗺️ World Map with Chord Connections")
+            st.pyplot(fig)
+            
+            # Display statistics
+            display_statistics(country_data, connection_data, mapped_data, mapped_connections, unmapped_codes)
+            
+            # Map download options
+            st.subheader("💾 Export Options")
+            
+            # Convert figure to bytes for download
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=200, bbox_inches='tight', 
+                      facecolor=st.session_state.background_color)
+            buf.seek(0)
+            
+            col_dl1, col_dl2 = st.columns(2)
+            
+            with col_dl1:
+                st.download_button(
+                    label="📥 Download as High-Quality PNG",
+                    data=buf,
+                    file_name=f"world_map_with_chords.png",
+                    mime="image/png",
+                    use_container_width=True
+                )
+            
+            with col_dl2:
+                # Save as SVG
+                buf_svg = io.BytesIO()
+                fig.savefig(buf_svg, format='svg', bbox_inches='tight',
                           facecolor=st.session_state.background_color)
-                buf.seek(0)
+                buf_svg.seek(0)
                 
-                col_dl1, col_dl2 = st.columns(2)
-                
-                with col_dl1:
-                    st.download_button(
-                        label="📥 Download as High-Quality PNG",
-                        data=buf,
-                        file_name=f"world_map_{st.session_state.fill_style.replace(' ', '_')}.png",
-                        mime="image/png",
-                        use_container_width=True
-                    )
-                
-                with col_dl2:
-                    # Save as SVG
-                    buf_svg = io.BytesIO()
-                    fig.savefig(buf_svg, format='svg', bbox_inches='tight',
-                              facecolor=st.session_state.background_color)
-                    buf_svg.seek(0)
-                    
-                    st.download_button(
-                        label="📥 Download as Scalable SVG",
-                        data=buf_svg,
-                        file_name=f"world_map_{st.session_state.fill_style.replace(' ', '_')}.svg",
-                        mime="image/svg+xml",
-                        use_container_width=True
-                    )
+                st.download_button(
+                    label="📥 Download as Scalable SVG",
+                    data=buf_svg,
+                    file_name=f"world_map_with_chords.svg",
+                    mime="image/svg+xml",
+                    use_container_width=True
+                )
 
 # Display initial instructions if no map generated yet
 if not generate_btn:
@@ -1204,57 +1518,59 @@ if not generate_btn:
     with st.expander("📋 Quick Start Guide", expanded=True):
         st.markdown("""
         ### 🚀 Getting Started:
-        1. **Enter your data** in the format: `CountryCode Frequency`
-        2. **Choose map type**: 2D for beautiful effects or 3D for interactive globe
-        3. **Select colors** from presets or create custom
-        4. **Choose fill style** (for 2D maps)
-        5. **Click Generate Map**!
+        1. **Enter your data** in the format: `CountryCode Frequency` or `Country1;Country2 Frequency`
+        2. **Choose colors** from presets or create custom
+        3. **Configure chord lines** (thickness, colors, labels)
+        4. **Click Generate Map**!
+        
+        ### 📊 Data Formats:
+        - **Single country**: `US 100`
+        - **Connection between 2 countries**: `CN;US 10`
+        - **Multiple countries**: `RU;SA;TR 6` (creates pairwise connections)
+        
+        ### 🔗 Chord Line Features:
+        - **Thickness** proportional to frequency
+        - **Curved Bezier lines** for better visualization
+        - **Color coding** options (single color or by frequency)
+        - **Direction arrows** and labels
+        - **Filtering** by minimum frequency
         
         ### 💡 Tips:
         - Use ISO Alpha-2 (US) or Alpha-3 (USA) country codes
+        - For dense connections, increase minimum line width threshold
+        - Enable labels only for important connections to reduce clutter
         - Try different fill styles for unique visual effects
-        - 3D Globe shows frequency as column height
-        - Hover over 3D columns for detailed info
-        
-        ### 📊 Sample Data Format:
         """)
-        st.code("""CN\t216
-IN\t144
-RU\t126
-US\t83
-GB\t35
-FR\t29
-DE\t27
-JP\t27
-AU\t20
-ES\t18""")
 
 # Sidebar information
 with st.sidebar:
     st.header("ℹ️ Features")
     
     st.markdown("""
-    ### ✨ Visual Effects:
-    - **Glossy 3D**: Realistic 3D look with highlights
-    - **Neon Glow**: Vibrant glowing borders
-    - **Topographic**: Terrain-like height effects
-    - **Metallic**: Reflective metal surfaces
-    - **Watercolor**: Artistic soft textures
-    - **Heatmap**: Radiation/heat glow effects
+    ### 🌍 Map Types:
+    - **Heatmap**: Country colors by frequency
+    - **Chord Diagram**: Lines show connections
     
-    ### 🌐 Map Types:
-    - **2D Enhanced**: Beautiful static maps
-    - **3D Globe**: Interactive 3D visualization
+    ### 🔗 Connection Lines:
+    - Bezier curves between countries
+    - Thickness = frequency
+    - Multiple color schemes
+    - Direction arrows
+    - Frequency labels
     
-    ### 🎨 Color Options:
-    - 10 predefined palettes
-    - Custom 2 or 3-color gradients
-    - Adaptive colors based on fill style
+    ### 🎨 Visual Effects:
+    - 7 fill styles for countries
+    - 10 color palettes
+    - Custom 2/3-color gradients
+    
+    ### 📊 Data Support:
+    - Single country frequencies
+    - Pairwise connections
+    - Multi-country interactions
     
     ### 💾 Export:
     - High-quality PNG (200 DPI)
     - Scalable SVG vector format
-    - Interactive 3D views
     """)
     
     st.divider()
@@ -1267,17 +1583,14 @@ with st.sidebar:
     **Created with:**
     - Streamlit
     - Matplotlib
-    - PyDeck
     - GeoPandas
+    - NetworkX
     """)
 
 # Footer
 st.divider()
 st.markdown("""
 <div style='text-align: center; color: #666; font-size: 0.9em;'>
-    🌍 Interactive World Frequency Map Generator | Enhanced Visual Effects Edition
+    🌍 World Frequency Map with Chord Connections | Interactive Visualization Tool
 </div>
 """, unsafe_allow_html=True)
-
-
-
