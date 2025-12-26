@@ -8,3 +8,5 @@ colour>=0.1.5
 requests>=2.31.0
 shapely>=2.0.0
 pydeck>=0.8.0
+pillow>=10.0.0
+scipy>=1.11.0
