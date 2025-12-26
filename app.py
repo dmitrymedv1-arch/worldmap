@@ -627,6 +627,56 @@ def create_pydeck_3d_map(mapped_data, world, color_scheme):
         st.error(f"Error creating 3D map: {e}")
         return None
 
+def display_statistics(country_data, mapped_data, unmapped_codes):
+    """Display statistics panel"""
+    st.subheader("📊 Data Statistics")
+    
+    col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+    
+    with col_stat1:
+        st.metric("Countries in Input", len(country_data))
+    
+    with col_stat2:
+        matched = len(mapped_data)
+        st.metric("Countries Matched", f"{matched}/{len(country_data)}")
+    
+    with col_stat3:
+        if mapped_data:
+            values = list(mapped_data.values())
+            st.metric("Frequency Range", f"{min(values):.1f} - {max(values):.1f}")
+        else:
+            st.metric("Frequency Range", "N/A")
+    
+    with col_stat4:
+        if mapped_data:
+            avg = sum(mapped_data.values()) / len(mapped_data)
+            st.metric("Average Frequency", f"{avg:.2f}")
+        else:
+            st.metric("Average Frequency", "N/A")
+    
+    # Top countries table
+    st.subheader("🏆 Top Countries")
+    if country_data:
+        top_df = pd.DataFrame({
+            'Country': list(country_data.keys()),
+            'Frequency': list(country_data.values())
+        }).sort_values('Frequency', ascending=False).head(10)
+        
+        st.dataframe(top_df, use_container_width=True, 
+                    column_config={
+                        "Country": st.column_config.TextColumn("Country Code"),
+                        "Frequency": st.column_config.NumberColumn(
+                            "Frequency",
+                            format="%.0f"
+                        )
+                    })
+    
+    # Show unmatched codes
+    if unmapped_codes:
+        st.warning(f"⚠️ {len(unmapped_codes)} country codes could not be matched: {', '.join(sorted(unmapped_codes)[:10])}")
+        if len(unmapped_codes) > 10:
+            st.info(f"... and {len(unmapped_codes) - 10} more unmatched codes")
+            
 def generate_map():
     """Generate the world frequency map"""
     # Parse input data
@@ -1146,56 +1196,6 @@ if generate_btn:
                         use_container_width=True
                     )
 
-def display_statistics(country_data, mapped_data, unmapped_codes):
-    """Display statistics panel"""
-    st.subheader("📊 Data Statistics")
-    
-    col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
-    
-    with col_stat1:
-        st.metric("Countries in Input", len(country_data))
-    
-    with col_stat2:
-        matched = len(mapped_data)
-        st.metric("Countries Matched", f"{matched}/{len(country_data)}")
-    
-    with col_stat3:
-        if mapped_data:
-            values = list(mapped_data.values())
-            st.metric("Frequency Range", f"{min(values):.1f} - {max(values):.1f}")
-        else:
-            st.metric("Frequency Range", "N/A")
-    
-    with col_stat4:
-        if mapped_data:
-            avg = sum(mapped_data.values()) / len(mapped_data)
-            st.metric("Average Frequency", f"{avg:.2f}")
-        else:
-            st.metric("Average Frequency", "N/A")
-    
-    # Top countries table
-    st.subheader("🏆 Top Countries")
-    if country_data:
-        top_df = pd.DataFrame({
-            'Country': list(country_data.keys()),
-            'Frequency': list(country_data.values())
-        }).sort_values('Frequency', ascending=False).head(10)
-        
-        st.dataframe(top_df, use_container_width=True, 
-                    column_config={
-                        "Country": st.column_config.TextColumn("Country Code"),
-                        "Frequency": st.column_config.NumberColumn(
-                            "Frequency",
-                            format="%.0f"
-                        )
-                    })
-    
-    # Show unmatched codes
-    if unmapped_codes:
-        st.warning(f"⚠️ {len(unmapped_codes)} country codes could not be matched: {', '.join(sorted(unmapped_codes)[:10])}")
-        if len(unmapped_codes) > 10:
-            st.info(f"... and {len(unmapped_codes) - 10} more unmatched codes")
-
 # Display initial instructions if no map generated yet
 if not generate_btn:
     st.info("👈 Configure your settings above and click 'Generate Map' to create your visualization")
@@ -1278,5 +1278,6 @@ st.markdown("""
     🌍 Interactive World Frequency Map Generator | Enhanced Visual Effects Edition
 </div>
 """, unsafe_allow_html=True)
+
 
 
