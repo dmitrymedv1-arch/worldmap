@@ -3,7 +3,7 @@ import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-from matplotlib.colors import LinearSegmentedColormap, LightSource
+from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.patheffects import withStroke
 import numpy as np
 import requests
@@ -1278,4 +1278,5 @@ st.markdown("""
     🌍 Interactive World Frequency Map Generator | Enhanced Visual Effects Edition
 </div>
 """, unsafe_allow_html=True)
+
 
