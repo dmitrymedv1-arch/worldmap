@@ -23,7 +23,7 @@ warnings.filterwarnings('ignore')
 
 # Page configuration
 st.set_page_config(
-    page_title="World Frequency Map with Chord Lines",
+    page_title="World Frequency",
     page_icon="🌍",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -1594,3 +1594,4 @@ st.markdown("""
     🌍 World Frequency Map with Chord Connections | Interactive Visualization Tool
 </div>
 """, unsafe_allow_html=True)
+
