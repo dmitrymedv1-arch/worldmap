@@ -1585,9 +1585,10 @@ with st.sidebar:
 st.divider()
 st.markdown("""
 <div style='text-align: center; color: #666; font-size: 0.9em;'>
-    🌍 World Frequency Map with Chord Connections | Interactive Visualization Tool
+    **developed by @daM, @CTA, https://chimicatechnoacta.ru **.
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
