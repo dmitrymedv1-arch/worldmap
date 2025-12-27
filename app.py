@@ -1579,12 +1579,6 @@ with st.sidebar:
     **Map Data Sources:**
     - Natural Earth geographic data
     - Built-in fallback datasets
-    
-    **Created with:**
-    - Streamlit
-    - Matplotlib
-    - GeoPandas
-    - NetworkX
     """)
 
 # Footer
@@ -1594,5 +1588,6 @@ st.markdown("""
     🌍 World Frequency Map with Chord Connections | Interactive Visualization Tool
 </div>
 """, unsafe_allow_html=True)
+
 
 
