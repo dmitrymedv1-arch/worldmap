@@ -1106,7 +1106,8 @@ if 'data_input' not in st.session_state:
     reset_settings()
 
 # Main app layout
-st.title(**developed by @daM, @CTA, https://chimicatechnoacta.ru **.)
+st.title("""**developed by @daM, @CTA, https://chimicatechnoacta.ru **.
+""")
 st.markdown("""
 Create stunning world frequency maps with chord lines showing connections between countries. 
 Supports both single country frequencies (CN 216) and connections (CN;US 10).
@@ -1588,6 +1589,7 @@ st.markdown("""
     🌍 World Frequency Map with Chord Connections | Interactive Visualization Tool
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
