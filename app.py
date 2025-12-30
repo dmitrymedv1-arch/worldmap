@@ -1266,13 +1266,12 @@ def generate_map():
                         )
                 except Exception as e:
                     continue
-        
-        # Add colorbar with style matching the map - 2/3 width with ticks at both ends
+
+        # Add colorbar with style matching the map - 2/3 width with ticks
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
         
         # Create axes for colorbar - positioned at bottom center
-        # Get the current axes position
         ax_pos = ax.get_position()
         
         # Calculate position for colorbar (2/3 width, centered)
@@ -1285,42 +1284,44 @@ def generate_map():
         # Create axes for colorbar
         cbar_ax = fig.add_axes([left, bottom, width, height])
         
-        # Create colorbar with ticks at min and max values
+        # Create colorbar
         cbar = fig.colorbar(sm, cax=cbar_ax, orientation='horizontal')
         cbar.set_label(st.session_state.scale_title, fontsize=14, weight='bold', labelpad=10)
         
-        # Set ticks - ensure we have ticks at both ends
-        ticks = [min_val, max_val]
-        
-        # Add intermediate ticks if there's enough range
-        if max_val - min_val > 10:
-            # Add 1-2 intermediate ticks
-            mid1 = min_val + (max_val - min_val) * 0.33
-            mid2 = min_val + (max_val - min_val) * 0.67
-            ticks = [min_val, mid1, mid2, max_val]
-        elif max_val - min_val > 5:
-            # Add one intermediate tick
-            mid = (min_val + max_val) / 2
-            ticks = [min_val, mid, max_val]
-        
-        # Format tick labels
+        # ALWAYS create 5 tick marks (min, 3 intermediates, max)
+        ticks = []
         tick_labels = []
-        for tick in ticks:
-            if tick >= 1000:
-                tick_labels.append(f"{tick/1000:.1f}k")
-            elif tick >= 100:
-                tick_labels.append(f"{tick:.0f}")
-            elif tick >= 10:
-                tick_labels.append(f"{tick:.1f}")
-            else:
-                tick_labels.append(f"{tick:.2f}")
         
+        # Always create 5 evenly spaced ticks
+        num_ticks = 5
+        for i in range(num_ticks):
+            # Calculate tick value (evenly spaced)
+            tick_value = min_val + (max_val - min_val) * (i / (num_ticks - 1))
+            ticks.append(tick_value)
+            
+            # Format tick label
+            if tick_value >= 1000000:
+                formatted_value = f"{tick_value/1000000:.2f}M"
+            elif tick_value >= 1000:
+                formatted_value = f"{tick_value/1000:.1f}k"
+            elif tick_value >= 100:
+                formatted_value = f"{tick_value:.0f}"
+            elif tick_value >= 10:
+                formatted_value = f"{tick_value:.1f}"
+            elif tick_value >= 1:
+                formatted_value = f"{tick_value:.2f}"
+            else:
+                formatted_value = f"{tick_value:.3f}"
+            
+            tick_labels.append(formatted_value)
+        
+        # Set ticks and labels
         cbar.set_ticks(ticks)
         cbar.set_ticklabels(tick_labels)
         cbar.ax.tick_params(labelsize=11)
         
         # Add minor ticks for better scale visualization
-        cbar.ax.xaxis.set_minor_locator(AutoMinorLocator(5))
+        cbar.ax.xaxis.set_minor_locator(AutoMinorLocator(4))
         
         # Style the colorbar
         cbar.outline.set_linewidth(1)
@@ -1911,6 +1912,7 @@ st.markdown("""
     developed by @daM, @CTA, https://chimicatechnoacta.ru
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
