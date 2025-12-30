@@ -18,16 +18,135 @@ from shapely.geometry import Point, Polygon, LineString
 import io
 from scipy.interpolate import interp1d
 import networkx as nx
+import re
 
 warnings.filterwarnings('ignore')
 
 # Page configuration
 st.set_page_config(
-    page_title="World Frequency",
+    page_title="World Frequency Map",
     page_icon="🌍",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Comprehensive country name mapping
+COUNTRY_NAME_MAPPING = {
+    # English names variations
+    'United States': 'United States of America',
+    'USA': 'United States of America',
+    'US': 'United States of America',
+    'United Kingdom': 'United Kingdom',
+    'UK': 'United Kingdom',
+    'Great Britain': 'United Kingdom',
+    'Russia': 'Russian Federation',
+    'Russian Federation': 'Russian Federation',
+    'RU': 'Russian Federation',
+    'Australia': 'Australia',
+    'AU': 'Australia',
+    'Poland': 'Poland',
+    'PL': 'Poland',
+    'Saudi Arabia': 'Saudi Arabia',
+    'SA': 'Saudi Arabia',
+    'KSA': 'Saudi Arabia',
+    'Norway': 'Norway',
+    'NO': 'Norway',
+    'Finland': 'Finland',
+    'FI': 'Finland',
+    'Portugal': 'Portugal',
+    'PT': 'Portugal',
+    'Brunei': 'Brunei Darussalam',
+    'Brunei Darussalam': 'Brunei Darussalam',
+    'BN': 'Brunei Darussalam',
+    
+    # Additional common countries
+    'China': 'China',
+    'CN': 'China',
+    'India': 'India',
+    'IN': 'India',
+    'Germany': 'Germany',
+    'DE': 'Germany',
+    'France': 'France',
+    'FR': 'France',
+    'Japan': 'Japan',
+    'JP': 'Japan',
+    'South Korea': 'South Korea',
+    'Korea': 'South Korea',
+    'KR': 'South Korea',
+    'Canada': 'Canada',
+    'CA': 'Canada',
+    'Brazil': 'Brazil',
+    'BR': 'Brazil',
+    'Italy': 'Italy',
+    'IT': 'Italy',
+    'Spain': 'Spain',
+    'ES': 'Spain',
+    'Mexico': 'Mexico',
+    'MX': 'Mexico',
+    'Netherlands': 'Netherlands',
+    'NL': 'Netherlands',
+    'Sweden': 'Sweden',
+    'SE': 'Sweden',
+    'Switzerland': 'Switzerland',
+    'CH': 'Switzerland',
+    'Turkey': 'Turkey',
+    'TR': 'Turkey',
+    'Iran': 'Iran',
+    'IR': 'Iran',
+    'Egypt': 'Egypt',
+    'EG': 'Egypt',
+    'South Africa': 'South Africa',
+    'ZA': 'South Africa',
+    'Indonesia': 'Indonesia',
+    'ID': 'Indonesia',
+    'Pakistan': 'Pakistan',
+    'PK': 'Pakistan',
+    'Bangladesh': 'Bangladesh',
+    'BD': 'Bangladesh',
+    'Nigeria': 'Nigeria',
+    'NG': 'Nigeria',
+    'Vietnam': 'Vietnam',
+    'VN': 'Vietnam',
+    'Thailand': 'Thailand',
+    'TH': 'Thailand',
+    'Philippines': 'Philippines',
+    'PH': 'Philippines',
+    'Ukraine': 'Ukraine',
+    'UA': 'Ukraine',
+    'Israel': 'Israel',
+    'IL': 'Israel',
+    'United Arab Emirates': 'United Arab Emirates',
+    'UAE': 'United Arab Emirates',
+    'Singapore': 'Singapore',
+    'SG': 'Singapore',
+    'Malaysia': 'Malaysia',
+    'MY': 'Malaysia',
+    'Greece': 'Greece',
+    'GR': 'Greece',
+    'Czech Republic': 'Czechia',
+    'Czechia': 'Czechia',
+    'CZ': 'Czechia',
+    'Austria': 'Austria',
+    'AT': 'Austria',
+    'Belgium': 'Belgium',
+    'BE': 'Belgium',
+    'Denmark': 'Denmark',
+    'DK': 'Denmark',
+    'Ireland': 'Ireland',
+    'IE': 'Ireland',
+    'New Zealand': 'New Zealand',
+    'NZ': 'New Zealand',
+    'Argentina': 'Argentina',
+    'AR': 'Argentina',
+    'Chile': 'Chile',
+    'CL': 'Chile',
+    'Colombia': 'Colombia',
+    'CO': 'Colombia',
+    'Peru': 'Peru',
+    'PE': 'Peru',
+    'Venezuela': 'Venezuela',
+    'VE': 'Venezuela',
+}
 
 # Country code mapping for common codes
 country_code_mapping = {
@@ -36,13 +155,18 @@ country_code_mapping = {
     'KZ': 'KAZ', 'UA': 'UKR', 'FR': 'FRA', 'TR': 'TUR', 'JP': 'JPN',
     'DE': 'DEU', 'BR': 'BRA', 'IR': 'IRN', 'AU': 'AUS', 'ES': 'ESP',
     'MY': 'MYS', 'IT': 'ITA', 'CA': 'CAN', 'MX': 'MEX', 'NL': 'NLD',
-    'SE': 'SWE', 'NO': 'NOR', 'FI': 'FIN', 'PL': 'POL', 'CZ': 'CZE'
+    'SE': 'SWE', 'NO': 'NOR', 'FI': 'FIN', 'PL': 'POL', 'CZ': 'CZE',
+    'PT': 'PRT', 'BN': 'BRN', 'DK': 'DNK', 'CH': 'CHE', 'AT': 'AUT',
+    'GR': 'GRC', 'IL': 'ISR', 'SG': 'SGP', 'TH': 'THA', 'VN': 'VNM',
+    'PH': 'PHL', 'ID': 'IDN', 'BD': 'BGD', 'NG': 'NGA', 'ZA': 'ZAF',
+    'CL': 'CHL', 'AR': 'ARG', 'CO': 'COL', 'PE': 'PER', 'VE': 'VEN',
+    'IE': 'IRL', 'NZ': 'NZL', 'BE': 'BEL'
 }
 
 # Predefined color palettes
 PREDEFINED_PALETTES = {
-    'Red Gradient': ['#FFEBEE', '#FF5252', '#D50000'],
     'Blue Gradient': ['#E3F2FD', '#2196F3', '#0D47A1'],
+    'Red Gradient': ['#FFEBEE', '#FF5252', '#D50000'],
     'Green Gradient': ['#E8F5E9', '#4CAF50', '#1B5E20'],
     'Purple Gradient': ['#F3E5F5', '#9C27B0', '#4A148C'],
     'Orange Gradient': ['#FFF3E0', '#FF9800', '#E65100'],
@@ -125,15 +249,43 @@ def load_world_map_data():
         st.info("Creating minimal world dataset...")
         return None
 
+def normalize_country_name(country_input):
+    """Normalize country name to standard format"""
+    if not country_input or not isinstance(country_input, str):
+        return country_input
+    
+    # Remove extra whitespace
+    country_input = country_input.strip()
+    
+    # Check if it's already in our mapping
+    if country_input in COUNTRY_NAME_MAPPING:
+        return COUNTRY_NAME_MAPPING[country_input]
+    
+    # Try case-insensitive matching
+    for key, value in COUNTRY_NAME_MAPPING.items():
+        if country_input.lower() == key.lower():
+            return value
+    
+    # Try partial matching
+    for key, value in COUNTRY_NAME_MAPPING.items():
+        if country_input.lower() in key.lower() or key.lower() in country_input.lower():
+            return value
+    
+    # Return original if no match found
+    return country_input
+
 def parse_input_data(input_text):
-    """Parse input data from text area"""
+    """Parse input data from text area with support for full country names"""
     country_data = {}
     connection_data = []
     
     lines = input_text.strip().split('\n')
     for line in lines:
         if line.strip():
-            parts = line.strip().split()
+            # Split by tab or multiple spaces
+            parts = re.split(r'\t|\s{2,}', line.strip())
+            parts = [p for p in parts if p.strip()]
+            
             if len(parts) >= 2:
                 country_part = parts[0]
                 try:
@@ -141,18 +293,28 @@ def parse_input_data(input_text):
                     
                     # Check if it's a connection (contains ;)
                     if ';' in country_part:
-                        countries = [c.strip().upper() for c in country_part.split(';')]
+                        raw_countries = [c.strip() for c in country_part.split(';')]
+                        # Normalize country names
+                        countries = [normalize_country_name(c) for c in raw_countries]
                         connection_data.append({
                             'countries': countries,
-                            'frequency': frequency
+                            'frequency': frequency,
+                            'raw_names': raw_countries  # Store original for display
                         })
                     else:
                         # Single country frequency
-                        country_code = country_part.upper()
-                        country_data[country_code] = frequency
+                        country_name = normalize_country_name(country_part)
+                        if country_name:
+                            country_data[country_name] = {
+                                'frequency': frequency,
+                                'raw_name': country_part  # Store original for display
+                            }
                         
-                except:
-                    pass
+                except ValueError:
+                    st.warning(f"Could not parse frequency from line: {line}")
+                except Exception as e:
+                    st.warning(f"Error parsing line: {line} - {e}")
+    
     return country_data, connection_data
 
 def create_custom_colormap(color1, color2, color3=None, n_points=256):
@@ -539,68 +701,101 @@ def get_country_centroid(geometry):
             bounds = geometry.bounds
             return Point((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2)
 
-def get_country_iso3(country_code, world):
-    """Get ISO_A3 code from country code with mapping"""
-    # First try mapping
-    if country_code in country_code_mapping:
-        return country_code_mapping[country_code]
+def find_country_in_world(country_name, world):
+    """Find country in world data by name with fuzzy matching"""
+    # Try exact match in various name columns
+    name_columns = ['NAME', 'NAME_LONG', 'ADMIN', 'SOVEREIGNT', 'FORMAL_EN']
     
-    # Try to find in world data
-    for iso_col in ['ISO_A3', 'ISO_A3_EH', 'ADM0_A3', 'ISO_A2']:
-        if iso_col in world.columns:
-            matches = world[world[iso_col] == country_code]
+    for col in name_columns:
+        if col in world.columns:
+            matches = world[world[col].str.contains(country_name, case=False, na=False)]
             if not matches.empty:
-                return matches.iloc[0]['ISO_A3'] if 'ISO_A3' in matches.columns else country_code
+                return matches.iloc[0]
     
-    return country_code
+    # Try partial matching
+    for col in name_columns:
+        if col in world.columns:
+            for idx, row in world.iterrows():
+                if pd.notna(row[col]):
+                    # Check if our country name contains or is contained by the official name
+                    if (country_name.lower() in row[col].lower() or 
+                        row[col].lower() in country_name.lower()):
+                        return row
+    
+    # Try using the country name mapping
+    if country_name in COUNTRY_NAME_MAPPING:
+        normalized = COUNTRY_NAME_MAPPING[country_name]
+        return find_country_in_world(normalized, world)
+    
+    return None
 
-def map_country_codes(country_data, connection_data, world):
-    """Map country codes to ISO_A3 and create connection mappings"""
+def map_country_names(country_data, connection_data, world):
+    """Map country names to world data and create connection mappings"""
     mapped_data = {}
-    unmapped_codes = []
+    unmapped_names = []
+    name_to_iso3 = {}
     
     # Map single country frequencies
-    for code, freq in country_data.items():
-        iso_code = get_country_iso3(code, world)
-        if iso_code != code:  # Found mapping
-            mapped_data[iso_code] = freq
+    for country_name, data in country_data.items():
+        country_row = find_country_in_world(country_name, world)
+        if country_row is not None and 'ISO_A3' in country_row:
+            iso_code = country_row['ISO_A3']
+            mapped_data[iso_code] = {
+                'frequency': data['frequency'],
+                'name': country_name,
+                'raw_name': data['raw_name']
+            }
+            name_to_iso3[country_name] = iso_code
         else:
-            unmapped_codes.append(code)
+            unmapped_names.append(country_name)
     
     # Map connections
     mapped_connections = []
     for conn in connection_data:
         countries = conn['countries']
         freq = conn['frequency']
+        raw_names = conn['raw_names']
         
         mapped_countries = []
         all_mapped = True
+        iso_codes = []
         
-        for country in countries:
-            iso_code = get_country_iso3(country, world)
-            if iso_code != country:
-                mapped_countries.append(iso_code)
+        for country, raw_name in zip(countries, raw_names):
+            if country in name_to_iso3:
+                iso_codes.append(name_to_iso3[country])
+                mapped_countries.append(country)
             else:
-                all_mapped = False
-                unmapped_codes.append(country)
+                country_row = find_country_in_world(country, world)
+                if country_row is not None and 'ISO_A3' in country_row:
+                    iso_code = country_row['ISO_A3']
+                    iso_codes.append(iso_code)
+                    mapped_countries.append(country)
+                    name_to_iso3[country] = iso_code
+                else:
+                    all_mapped = False
+                    unmapped_names.append(country)
         
-        if all_mapped and len(mapped_countries) >= 2:
+        if all_mapped and len(iso_codes) >= 2:
             # Create pairwise connections for multiple countries
-            if len(mapped_countries) == 2:
+            if len(iso_codes) == 2:
                 mapped_connections.append({
+                    'iso_codes': iso_codes,
                     'countries': mapped_countries,
+                    'raw_names': raw_names,
                     'frequency': freq
                 })
             else:
                 # For 3+ countries, create connections between each pair
-                for i in range(len(mapped_countries)):
-                    for j in range(i+1, len(mapped_countries)):
+                for i in range(len(iso_codes)):
+                    for j in range(i+1, len(iso_codes)):
                         mapped_connections.append({
+                            'iso_codes': [iso_codes[i], iso_codes[j]],
                             'countries': [mapped_countries[i], mapped_countries[j]],
+                            'raw_names': [raw_names[i], raw_names[j]],
                             'frequency': freq
                         })
     
-    return mapped_data, mapped_connections, unmapped_codes
+    return mapped_data, mapped_connections, unmapped_names, name_to_iso3
 
 def calculate_bezier_curve(p1, p2, height_factor=0.3):
     """
@@ -729,7 +924,7 @@ def draw_chord_lines(ax, world, connections, mapped_data, country_colors):
     
     # Get country centroids
     country_centroids = {}
-    for iso_code in set([c for conn in connections for c in conn['countries']]):
+    for iso_code in set([c for conn in connections for c in conn['iso_codes']]):
         country = world[world['ISO_A3'] == iso_code]
         if not country.empty:
             centroid = get_country_centroid(country.geometry.iloc[0])
@@ -740,24 +935,24 @@ def draw_chord_lines(ax, world, connections, mapped_data, country_colors):
     
     # Draw each connection
     for conn in sorted_connections:
-        countries = conn['countries']
+        iso_codes = conn['iso_codes']
         freq = conn['frequency']
         
-        if len(countries) >= 2:
+        if len(iso_codes) >= 2:
             # Get coordinates for all countries
             coords = []
             valid = True
-            for country in countries[:2]:  # Only use first 2 for line
-                if country in country_centroids:
-                    coords.append(country_centroids[country])
+            for iso_code in iso_codes[:2]:  # Only use first 2 for line
+                if iso_code in country_centroids:
+                    coords.append(country_centroids[iso_code])
                 else:
                     valid = False
                     break
             
             if valid and len(coords) == 2:
                 # Get colors for these countries
-                color1 = country_colors.get(countries[0], '#888888')
-                color2 = country_colors.get(countries[1], '#888888')
+                color1 = country_colors.get(iso_codes[0], '#888888')
+                color2 = country_colors.get(iso_codes[1], '#888888')
                 
                 # Draw the line
                 line_width = draw_connection_line(
@@ -783,7 +978,9 @@ def draw_chord_lines(ax, world, connections, mapped_data, country_colors):
                         
                         label_text = f"{freq:.0f}"
                         if st.session_state.line_label_type == 'Full':
-                            label_text = f"{countries[0]}-{countries[1]}: {freq:.0f}"
+                            # Use country names for the label
+                            country_names = conn['countries'][:2]
+                            label_text = f"{country_names[0]}-{country_names[1]}: {freq:.0f}"
                         
                         ax.annotate(
                             label_text,
@@ -806,7 +1003,7 @@ def draw_chord_lines(ax, world, connections, mapped_data, country_colors):
                             )
                         )
 
-def display_statistics(country_data, connection_data, mapped_data, mapped_connections, unmapped_codes):
+def display_statistics(country_data, connection_data, mapped_data, mapped_connections, unmapped_names):
     """Display statistics panel"""
     st.subheader("📊 Data Statistics")
     
@@ -827,7 +1024,7 @@ def display_statistics(country_data, connection_data, mapped_data, mapped_connec
     
     with col_stat4:
         if mapped_data:
-            values = list(mapped_data.values())
+            values = [data['frequency'] for data in mapped_data.values()]
             if values:
                 avg = sum(values) / len(values)
                 st.metric("Avg Country Freq", f"{avg:.2f}")
@@ -855,7 +1052,7 @@ def display_statistics(country_data, connection_data, mapped_data, mapped_connec
         st.subheader("🏆 Top Connections")
         top_conns = sorted(mapped_connections, key=lambda x: x['frequency'], reverse=True)[:10]
         conn_df = pd.DataFrame([{
-            'From': c['countries'][0],
+            'From': c['countries'][0] if len(c['countries']) > 0 else c['iso_codes'][0],
             'To': c['countries'][1] if len(c['countries']) > 1 else 'Multiple',
             'Frequency': c['frequency']
         } for c in top_conns])
@@ -865,25 +1062,32 @@ def display_statistics(country_data, connection_data, mapped_data, mapped_connec
     # Top countries table
     st.subheader("🏆 Top Countries")
     if country_data:
-        top_df = pd.DataFrame({
-            'Country': list(country_data.keys()),
-            'Frequency': list(country_data.values())
-        }).sort_values('Frequency', ascending=False).head(10)
+        # Create list of countries with their frequencies
+        country_list = []
+        for country_name, data in country_data.items():
+            country_list.append({
+                'Country': data['raw_name'],  # Use raw name for display
+                'Normalized Name': country_name,  # Show normalized name
+                'Frequency': data['frequency']
+            })
+        
+        top_df = pd.DataFrame(country_list).sort_values('Frequency', ascending=False).head(10)
         
         st.dataframe(top_df, use_container_width=True, 
                     column_config={
-                        "Country": st.column_config.TextColumn("Country Code"),
+                        "Country": st.column_config.TextColumn("Input Name"),
+                        "Normalized Name": st.column_config.TextColumn("Matched Name"),
                         "Frequency": st.column_config.NumberColumn(
                             "Frequency",
                             format="%.0f"
                         )
                     })
     
-    # Show unmatched codes
-    if unmapped_codes:
-        st.warning(f"⚠️ {len(unmapped_codes)} country codes could not be matched: {', '.join(sorted(set(unmapped_codes))[:10])}")
-        if len(unmapped_codes) > 10:
-            st.info(f"... and {len(unmapped_codes) - 10} more unmatched codes")
+    # Show unmatched names
+    if unmapped_names:
+        st.warning(f"⚠️ {len(unmapped_names)} country names could not be matched: {', '.join(sorted(set(unmapped_names))[:10])}")
+        if len(unmapped_names) > 10:
+            st.info(f"... and {len(unmapped_names) - 10} more unmatched names")
 
 def generate_map():
     """Generate the world frequency map"""
@@ -891,7 +1095,7 @@ def generate_map():
     country_data, connection_data = parse_input_data(st.session_state.data_input)
     
     if not country_data and not connection_data:
-        st.error("No valid data to display. Please enter country codes and frequencies.")
+        st.error("No valid data to display. Please enter country names and frequencies.")
         return None
     
     # Load world map data
@@ -901,8 +1105,8 @@ def generate_map():
             st.error("Failed to load world map data.")
             return None
     
-    # Map country codes to ISO_A3
-    mapped_data, mapped_connections, unmapped_codes = map_country_codes(
+    # Map country names to world data
+    mapped_data, mapped_connections, unmapped_names, name_to_iso3 = map_country_names(
         country_data, connection_data, world
     )
     
@@ -912,15 +1116,29 @@ def generate_map():
     # Set background
     ax.set_facecolor(st.session_state.background_color)
     
-    # Plot all countries as background
-    world.plot(ax=ax, color='lightgrey', edgecolor=st.session_state.border_color, 
-              linewidth=0.3, alpha=0.7)
+    # Plot all countries as background - WHITE with GRAY borders (default)
+    world.plot(ax=ax, color='white', edgecolor='#CCCCCC',  # Changed from lightgrey to white
+              linewidth=0.5, alpha=1.0)  # Changed alpha from 0.7 to 1.0
     
     # Get valid data
-    valid_data = world.merge(
-        pd.DataFrame(list(mapped_data.items()), columns=['ISO_A3', 'frequency']),
-        left_on='ISO_A3', right_on='ISO_A3', how='inner'
-    ) if mapped_data else pd.DataFrame()
+    if mapped_data:
+        # Create a DataFrame from mapped data
+        mapped_df = pd.DataFrame([
+            {
+                'ISO_A3': iso_code,
+                'frequency': data['frequency'],
+                'name': data['name'],
+                'raw_name': data['raw_name']
+            }
+            for iso_code, data in mapped_data.items()
+        ])
+        
+        valid_data = world.merge(
+            mapped_df,
+            left_on='ISO_A3', right_on='ISO_A3', how='inner'
+        )
+    else:
+        valid_data = pd.DataFrame()
     
     if not valid_data.empty:
         # Get color values
@@ -968,9 +1186,12 @@ def generate_map():
                         label = row['ISO_A3'] if pd.notna(row['ISO_A3']) else ''
                     elif st.session_state.label_type == 'Value Only':
                         label = f"{row['frequency']:.0f}"
-                    else:  # Code + Value
-                        code = row['ISO_A3'] if pd.notna(row['ISO_A3']) else ''
-                        label = f"{code}\n{row['frequency']:.0f}"
+                    elif st.session_state.label_type == 'Name Only':
+                        # Use the name from our mapped data
+                        label = row['name'] if 'name' in row and pd.notna(row['name']) else ''
+                    else:  # Name + Value
+                        name = row['name'] if 'name' in row and pd.notna(row['name']) else row['ISO_A3']
+                        label = f"{name}\n{row['frequency']:.0f}"
                     
                     if label:
                         # Add text with outline for better visibility
@@ -983,7 +1204,7 @@ def generate_map():
                             va='center',
                             fontsize=st.session_state.font_size,
                             color='black',
-                            weight='bold',
+                            weight='bold' if st.session_state.label_type in ['Name + Value', 'Name Only'] else 'normal',
                             fontfamily='sans-serif',
                             path_effects=[withStroke(linewidth=3, foreground='white')],
                             bbox=dict(
@@ -1008,7 +1229,7 @@ def generate_map():
     else:
         # If no country data but have connections, still draw connections
         if st.session_state.show_chords and mapped_connections:
-            country_colors = {code: '#888888' for conn in mapped_connections for code in conn['countries']}
+            country_colors = {code: '#888888' for conn in mapped_connections for code in conn['iso_codes']}
             draw_chord_lines(ax, world, mapped_connections, {}, country_colors)
     
     # Set title with enhanced styling
@@ -1031,53 +1252,36 @@ def generate_map():
     # Adjust layout
     plt.tight_layout()
     
-    return fig, country_data, connection_data, mapped_data, mapped_connections, unmapped_codes
+    return fig, country_data, connection_data, mapped_data, mapped_connections, unmapped_names
 
 def reset_settings():
     """Reset all settings to defaults"""
-    st.session_state.data_input = """CN\t216
-IN\t144
-RU\t126
-SA\t85
-US\t83
-EG\t51
-PK\t46
-BY\t41
-KR\t38
-GB\t35
-KZ\t33
-UA\t30
-FR\t29
-TR\t28
-JP\t27
-DE\t27
-BR\t25
-IR\t23
-AU\t20
-ES\t18
-MY\t14
-CN;US\t10
-IN;KR\t10
-BY;RU\t8
-AU;CN\t7
-RU;SA;TR\t6
-IN;SA\t6
-PK;SA\t5
-IN;US\t5
-KZ;RU\t4
-CN;JP\t4
-EG;RU\t4"""
+    st.session_state.data_input = """United States\t7860
+United Kingdom\t2350
+Russian Federation\t1081
+Australia\t927
+Poland\t905
+Saudi Arabia\t328
+Norway\t297
+Finland\t297
+Portugal\t288
+Brunei Darussalam\t102
+USA;UK\t150
+Russia;China\t120
+Australia;New Zealand\t80
+Germany;France\t75
+Japan;South Korea\t60"""
     st.session_state.map_title = "World Frequency Map"
     st.session_state.scale_title = "Frequency"
-    st.session_state.palette_selection = "Red Gradient"
+    st.session_state.palette_selection = "Blue Gradient"
     st.session_state.color_points = "2 Colors (Linear)"
     st.session_state.fill_style = "Glossy (3D Effect)"
-    st.session_state.show_labels = False
-    st.session_state.label_type = "Code + Value"
+    st.session_state.show_labels = True
+    st.session_state.label_type = "Name + Value"
     st.session_state.top_n_labels = 10
-    st.session_state.font_size = 8
+    st.session_state.font_size = 9
     st.session_state.background_color = "#F5F5F5"
-    st.session_state.border_color = "#FFFFFF"
+    st.session_state.border_color = "#CCCCCC"  # Changed to gray
     st.session_state.show_chords = True
     
     # Chord line settings
@@ -1086,13 +1290,13 @@ EG;RU\t4"""
     st.session_state.curve_height = 0.3
     st.session_state.line_style = 'Solid'
     st.session_state.line_color_type = 'Single Color'
-    st.session_state.line_color = '#FF5252'
+    st.session_state.line_color = '#2196F3'
     st.session_state.line_colormap = 'viridis'
     st.session_state.show_arrows = True
-    st.session_state.show_line_labels = False
+    st.session_state.show_line_labels = True
     st.session_state.line_label_type = 'Value Only'
-    st.session_state.min_label_freq = 5
-    st.session_state.line_font_size = 8
+    st.session_state.min_label_freq = 50
+    st.session_state.line_font_size = 9
     
     # Update color pickers based on palette
     selected_colors = PREDEFINED_PALETTES[st.session_state.palette_selection]
@@ -1106,10 +1310,10 @@ if 'data_input' not in st.session_state:
     reset_settings()
 
 # Main app layout
-st.title("World Frequency Map")
+st.title("World Frequency Map with Full Country Names")
 st.markdown("""
 Create stunning world frequency maps with chord lines showing connections between countries. 
-Supports both single country frequencies (CN 216) and connections (CN;US 10).
+Supports both full country names and abbreviations. Examples: "United States", "USA", "US", "Russian Federation", "Russia", "RU"
 """)
 
 # Create columns for layout
@@ -1124,13 +1328,22 @@ with col1:
         height=300,
         key="data_input_widget",
         help="""Format examples:
-        Single country: CN 216
-        Connection: CN;US 10
-        Multiple countries: RU;SA;TR 6 (will create pairwise connections)"""
+        Single country: United States 7860
+        Single country (abbreviation): US 7860
+        Connection: USA;UK 150
+        Multiple countries: Germany;France;Italy 50 (will create pairwise connections)
+        
+        Separate country and frequency with TAB or multiple spaces."""
     )
     st.session_state.data_input = data_input
     
-    st.info("💡 **Data Format**: Use TAB between country codes and frequency. For connections, separate countries with semicolon.")
+    st.info("""
+    💡 **Data Format Tips**:
+    - Use TAB between country names and frequency
+    - For connections, separate countries with semicolon (;)
+    - Supports: Full names (United States), abbreviations (US, USA), common names (Russia for Russian Federation)
+    - Case insensitive
+    """)
     
     # Map settings
     st.subheader("🗺️ Map Settings")
@@ -1275,7 +1488,7 @@ with st.expander("🔗 Chord Line Settings", expanded=False):
                 index=list(LINE_STYLES.keys()).index(st.session_state.line_style),
                 key="line_style_widget"
             )
-            st.session_state.line_style = line_style
+    st.session_state.line_style = line_style
     
     with col_ch2:
         if show_chords:
@@ -1334,7 +1547,7 @@ with st.expander("🔗 Chord Line Settings", expanded=False):
                 min_label_freq = st.slider(
                     "Min frequency for labels:",
                     min_value=0,
-                    max_value=50,
+                    max_value=500,
                     value=st.session_state.min_label_freq,
                     key="min_label_freq_widget"
                 )
@@ -1364,9 +1577,10 @@ with st.expander("⚙️ Advanced Settings", expanded=False):
         st.session_state.background_color = background_color
         
         border_color = st.color_picker(
-            "Border Color:",
+            "Border Color for all countries:",
             value=st.session_state.border_color,
-            key="border_color_widget"
+            key="border_color_widget",
+            help="Color for country borders. Default is light gray (#CCCCCC)"
         )
         st.session_state.border_color = border_color
     
@@ -1383,8 +1597,8 @@ with st.expander("⚙️ Advanced Settings", expanded=False):
         if show_labels:
             label_type = st.selectbox(
                 "Label Type:",
-                options=['Code Only', 'Value Only', 'Code + Value'],
-                index=['Code Only', 'Value Only', 'Code + Value'].index(st.session_state.label_type),
+                options=['Code Only', 'Value Only', 'Name Only', 'Name + Value'],
+                index=['Code Only', 'Value Only', 'Name Only', 'Name + Value'].index(st.session_state.label_type),
                 key="label_type_widget"
             )
             st.session_state.label_type = label_type
@@ -1415,42 +1629,26 @@ with col_btn2:
     reset_btn = st.button("🔄 Reset Settings", use_container_width=True)
 with col_btn3:
     if st.button("📥 Download Sample Data", use_container_width=True):
-        sample_data = """CN\t216
-IN\t144
-RU\t126
-SA\t85
-US\t83
-EG\t51
-PK\t46
-BY\t41
-KR\t38
-GB\t35
-KZ\t33
-UA\t30
-FR\t29
-TR\t28
-JP\t27
-DE\t27
-BR\t25
-IR\t23
-AU\t20
-ES\t18
-MY\t14
-CN;US\t10
-IN;KR\t10
-BY;RU\t8
-AU;CN\t7
-RU;SA;TR\t6
-IN;SA\t6
-PK;SA\t5
-IN;US\t5
-KZ;RU\t4
-CN;JP\t4
-EG;RU\t4"""
+        sample_data = """United States\t7860
+United Kingdom\t2350
+Russian Federation\t1081
+Australia\t927
+Poland\t905
+Saudi Arabia\t328
+Norway\t297
+Finland\t297
+Portugal\t288
+Brunei Darussalam\t102
+USA;UK\t150
+Russia;China\t120
+Australia;New Zealand\t80
+Germany;France\t75
+Japan;South Korea\t60
+France;Germany;Italy\t45"""
         st.download_button(
-            label="📥 Click to download",
+            label="📥 Click to download sample",
             data=sample_data,
-            file_name="sample_country_connections.txt",
+            file_name="sample_country_data_full_names.txt",
             mime="text/plain",
             use_container_width=True
         )
@@ -1466,14 +1664,14 @@ if generate_btn:
         result = generate_map()
         
         if result:
-            fig, country_data, connection_data, mapped_data, mapped_connections, unmapped_codes = result
+            fig, country_data, connection_data, mapped_data, mapped_connections, unmapped_names = result
             
             # Display the map
             st.subheader("🗺️ World Map with Chord Connections")
             st.pyplot(fig)
             
             # Display statistics
-            display_statistics(country_data, connection_data, mapped_data, mapped_connections, unmapped_codes)
+            display_statistics(country_data, connection_data, mapped_data, mapped_connections, unmapped_names)
             
             # Map download options
             st.subheader("💾 Export Options")
@@ -1518,15 +1716,21 @@ if not generate_btn:
     with st.expander("📋 Quick Start Guide", expanded=True):
         st.markdown("""
         ### 🚀 Getting Started:
-        1. **Enter your data** in the format: `CountryCode Frequency` or `Country1;Country2 Frequency`
+        1. **Enter your data** in the format: `CountryName Frequency` or `Country1;Country2 Frequency`
         2. **Choose colors** from presets or create custom
         3. **Configure chord lines** (thickness, colors, labels)
         4. **Click Generate Map**!
         
+        ### 🌍 Supported Country Name Formats:
+        - **Full names**: `United States`, `Russian Federation`, `United Kingdom`
+        - **Abbreviations**: `US`, `USA`, `RU`, `UK`, `FR`
+        - **Common names**: `Russia` (for Russian Federation), `South Korea` (for Korea)
+        - **Case insensitive**: `united states`, `Us`, `rU` all work
+        
         ### 📊 Data Formats:
-        - **Single country**: `US 100`
-        - **Connection between 2 countries**: `CN;US 10`
-        - **Multiple countries**: `RU;SA;TR 6` (creates pairwise connections)
+        - **Single country**: `United States 7860` or `US 7860`
+        - **Connection between 2 countries**: `USA;UK 150`
+        - **Multiple countries**: `Germany;France;Italy 45` (creates pairwise connections)
         
         ### 🔗 Chord Line Features:
         - **Thickness** proportional to frequency
@@ -1535,9 +1739,14 @@ if not generate_btn:
         - **Direction arrows** and labels
         - **Filtering** by minimum frequency
         
+        ### 🎨 Default Visual Changes:
+        - **Countries without data**: Now shown in **white** with **gray borders** (previously light gray)
+        - **Better contrast** between colored and uncolored countries
+        - **Cleaner, more professional look**
+        
         ### 💡 Tips:
-        - Use ISO Alpha-2 (US) or Alpha-3 (USA) country codes
-        - For dense connections, increase minimum line width threshold
+        - For best results, use consistent naming (all full names or all abbreviations)
+        - The app will try to match variations automatically
         - Enable labels only for important connections to reduce clutter
         - Try different fill styles for unique visual effects
         """)
@@ -1562,9 +1771,12 @@ with st.sidebar:
     - 7 fill styles for countries
     - 10 color palettes
     - Custom 2/3-color gradients
+    - **White background** for countries without data
     
     ### 📊 Data Support:
-    - Single country frequencies
+    - Full country names (United States)
+    - Abbreviations (US, USA)
+    - Common name variations
     - Pairwise connections
     - Multi-country interactions
     
@@ -1576,6 +1788,13 @@ with st.sidebar:
     st.divider()
     
     st.markdown("""
+    **Supported Country Formats:**
+    - United States, US, USA
+    - Russian Federation, Russia, RU
+    - United Kingdom, UK, GB
+    - Saudi Arabia, SA, KSA
+    - And 150+ other countries
+    
     **Map Data Sources:**
     - Natural Earth geographic data
     - Built-in fallback datasets
@@ -1588,13 +1807,3 @@ st.markdown("""
     developed by @daM, @CTA, https://chimicatechnoacta.ru
 </div>
 """, unsafe_allow_html=True)
-
-
-
-
-
-
-
-
-
-
