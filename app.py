@@ -19,6 +19,7 @@ import io
 from scipy.interpolate import interp1d
 import networkx as nx
 import re
+from matplotlib.ticker import AutoMinorLocator
 
 warnings.filterwarnings('ignore')
 
@@ -1910,4 +1911,5 @@ st.markdown("""
     developed by @daM, @CTA, https://chimicatechnoacta.ru
 </div>
 """, unsafe_allow_html=True)
+
 
