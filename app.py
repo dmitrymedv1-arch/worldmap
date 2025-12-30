@@ -1133,7 +1133,7 @@ def display_statistics(country_data, connection_data, mapped_data, mapped_connec
         
         # Show suggestions for unmatched names
         st.info("💡 **Suggestions**: Try using full country names or ISO codes (US, GB, RU, etc.)")
-
+    
 def generate_map():
     """Generate the world frequency map"""
     # Parse input data
@@ -1266,14 +1266,65 @@ def generate_map():
                 except Exception as e:
                     continue
         
-        # Add colorbar with style matching the map
+        # Add colorbar with style matching the map - 2/3 width with ticks at both ends
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
-        cbar = fig.colorbar(sm, ax=ax, orientation='horizontal', 
-                          pad=0.08, aspect=60, shrink=0.8)
-        cbar.set_label(st.session_state.scale_title, fontsize=14, weight='bold')
+        
+        # Create axes for colorbar - positioned at bottom center
+        # Get the current axes position
+        ax_pos = ax.get_position()
+        
+        # Calculate position for colorbar (2/3 width, centered)
+        width_ratio = 2.0/3.0  # 2/3 of map width
+        left = ax_pos.x0 + (ax_pos.width * (1 - width_ratio)) / 2
+        bottom = ax_pos.y0 - 0.08  # Position below the map
+        width = ax_pos.width * width_ratio
+        height = 0.02  # Height of colorbar
+        
+        # Create axes for colorbar
+        cbar_ax = fig.add_axes([left, bottom, width, height])
+        
+        # Create colorbar with ticks at min and max values
+        cbar = fig.colorbar(sm, cax=cbar_ax, orientation='horizontal')
+        cbar.set_label(st.session_state.scale_title, fontsize=14, weight='bold', labelpad=10)
+        
+        # Set ticks - ensure we have ticks at both ends
+        ticks = [min_val, max_val]
+        
+        # Add intermediate ticks if there's enough range
+        if max_val - min_val > 10:
+            # Add 1-2 intermediate ticks
+            mid1 = min_val + (max_val - min_val) * 0.33
+            mid2 = min_val + (max_val - min_val) * 0.67
+            ticks = [min_val, mid1, mid2, max_val]
+        elif max_val - min_val > 5:
+            # Add one intermediate tick
+            mid = (min_val + max_val) / 2
+            ticks = [min_val, mid, max_val]
+        
+        # Format tick labels
+        tick_labels = []
+        for tick in ticks:
+            if tick >= 1000:
+                tick_labels.append(f"{tick/1000:.1f}k")
+            elif tick >= 100:
+                tick_labels.append(f"{tick:.0f}")
+            elif tick >= 10:
+                tick_labels.append(f"{tick:.1f}")
+            else:
+                tick_labels.append(f"{tick:.2f}")
+        
+        cbar.set_ticks(ticks)
+        cbar.set_ticklabels(tick_labels)
         cbar.ax.tick_params(labelsize=11)
-    
+        
+        # Add minor ticks for better scale visualization
+        cbar.ax.xaxis.set_minor_locator(plt.AutoMinorLocator(5))
+        
+        # Style the colorbar
+        cbar.outline.set_linewidth(1)
+        cbar.outline.set_edgecolor('black')
+        
     else:
         # If no country data but have connections, still draw connections
         if st.session_state.show_chords and mapped_connections:
@@ -1301,8 +1352,8 @@ def generate_map():
     # Add subtle shadow to the whole map
     fig.patch.set_alpha(0.9)
     
-    # Adjust layout
-    plt.tight_layout()
+    # Adjust layout to accommodate colorbar
+    plt.tight_layout(rect=[0, 0.05, 1, 0.95])  # Leave space at bottom for colorbar
     
     return fig, country_data, connection_data, mapped_data, mapped_connections, unmapped_names
 
@@ -1859,3 +1910,4 @@ st.markdown("""
     developed by @daM, @CTA, https://chimicatechnoacta.ru
 </div>
 """, unsafe_allow_html=True)
+
