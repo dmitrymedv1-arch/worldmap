@@ -1320,7 +1320,7 @@ def generate_map():
         cbar.ax.tick_params(labelsize=11)
         
         # Add minor ticks for better scale visualization
-        cbar.ax.xaxis.set_minor_locator(plt.AutoMinorLocator(5))
+        cbar.ax.xaxis.set_minor_locator(AutoMinorLocator(5))
         
         # Style the colorbar
         cbar.outline.set_linewidth(1)
@@ -1911,5 +1911,6 @@ st.markdown("""
     developed by @daM, @CTA, https://chimicatechnoacta.ru
 </div>
 """, unsafe_allow_html=True)
+
 
 
